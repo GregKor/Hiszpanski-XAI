@@ -29,7 +29,8 @@ nav button[aria-selected=true]{background:var(--acc);color:#fff}
 button:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
 #fiUn{position:absolute;top:8px;left:8px;width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--ink);font:600 20px/1 inherit;font-family:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
 #fiUn:disabled{opacity:.3;cursor:default}
-.txo{line-height:2;font-size:1.05rem;white-space:pre-wrap;-webkit-user-select:text;user-select:text}.txo[hidden],.txp[hidden]{display:none}
+.txo{line-height:1.6;font-size:1.05rem;-webkit-user-select:text;user-select:text}.txo[hidden],.txp[hidden]{display:none}
+.txs{margin:0 0 10px}.txtr{font-size:.9rem;line-height:1.45;color:var(--mute);white-space:normal;-webkit-user-select:none;user-select:none}.txtr.er{cursor:pointer}.txo .txe{line-height:2}
 .tw{border-radius:6px;cursor:pointer;border-bottom:1px dotted var(--mute)}
 .tw.l{background:color-mix(in srgb,var(--sun) 30%,transparent);border-bottom-color:transparent}
 .tw.a{background:color-mix(in srgb,var(--ok) 28%,transparent);border-bottom-color:transparent}
@@ -176,6 +177,8 @@ body.noemo .card .pic{display:none}
 <section id="tx" class="panel">
 <p class="sub" style="margin-bottom:10px">Wklej hiszpański tekst, a potem dotknij słowa (albo zaznacz kilka) i dodaj je do fiszek.</p>
 <textarea id="txIn" rows="6" maxlength="20000" class="sel" style="width:100%" placeholder="Wklej tutaj hiszpański tekst…" aria-label="Tekst po hiszpańsku" lang="es"></textarea>
+<div class="row"><button class="btn" id="txDay">📖 Tekst dzienny</button></div>
+<select id="txDaySel" class="sel" aria-label="Dzień" hidden style="width:100%;margin-top:8px"></select>
 <div class="row"><button class="btn" id="txGo">Pokaż tekst</button><button class="btn" id="txSp">🔊 Czytaj</button><button class="btn" id="txClr">Wyczyść</button></div>
 <div id="txSt" style="min-height:1.4em;font-size:.88rem;color:var(--mute);margin:8px 0" aria-live="polite"></div>
 <div id="txOut" class="ref txo" lang="es" hidden></div>
@@ -886,14 +889,40 @@ const TXRE=/[\p{L}\p{M}]+(?:['’\-][\p{L}\p{M}]+)*/gu;
 function txMap(){const m=new Map();V.forEach(x=>{const es=x[0];es.split(/\s*\/\s*/).forEach(p=>{p=txCore(p);if(!p||/\s/.test(p))return;const cur=m.get(p);if(cur===undefined||(!SR[cur]&&SR[es]))m.set(p,es)})});return m}
 let txSent='',txSentPl='',txCatLast='Z tekstów';
 function txClose(){const p=$('#txPop');if(p)p.hidden=true;document.querySelectorAll('#txOut .tw.s').forEach(x=>x.classList.remove('s'))}
-function txRender(){const t=$('#txIn').value;try{localStorage.setItem('esTxt3',t)}catch(e){}
-const out=$('#txOut'),st=$('#txSt');txClose();
+/* --- podział na zdania i tłumaczenie w tle --- */
+let TXC={};try{TXC=JSON.parse(localStorage.getItem('esTxTr1')||'{}')}catch(e){}
+const txSave=()=>{const ks=Object.keys(TXC);if(ks.length>600)ks.slice(0,ks.length-600).forEach(k=>delete TXC[k]);try{localStorage.setItem('esTxTr1',JSON.stringify(TXC))}catch(e){}};
+function txSegs(t){const o=[];let pos=0;for(const ln of t.split('\n')){const base=pos;pos+=ln.length+1;if(!ln.trim())continue;let st=0,m;const re=/[.!?…]+["”»’')\]]*\s+(?=[¿¡"“«(]?\p{Lu})/gu;
+while((m=re.exec(ln))){const e=m.index+m[0].length;o.push([base+st,base+e]);st=e}o.push([base+st,base+ln.length])}
+return o.filter(x=>t.slice(x[0],x[1]).trim())}
+const txKey=x=>x.replace(/\s+/g,' ').trim();
+let txRun=0;
+function txPut(k,pl,err){const el=document.querySelector('#txOut .txtr[data-k="'+k+'"]');if(!el)return;el.classList.toggle('er',!!err);el.textContent=pl}
+async function txGtx(x){const r=await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=es&tl=pl&dt=t&q='+encodeURIComponent(x));if(!r.ok)throw new Error('HTTP '+r.status);const d=await r.json();const p=(d&&d[0]||[]).map(y=>y&&y[0]||'').join('').trim();if(!p)throw new Error('EMPTY');return p}
+async function txTranslate(){const my=++txRun,out=$('#txOut'),st=$('#txSt');
+const items=[...out.querySelectorAll('.txs')].map(d=>({k:d.dataset.k,x:txKey(d.querySelector('.txe').textContent)}));
+const todo=items.filter(i=>i.x&&!TXC[i.x]);items.forEach(i=>{if(TXC[i.x])txPut(i.k,TXC[i.x])});
+if(!todo.length)return;todo.forEach(i=>txPut(i.k,'…'));let fail=0;
+if(typeof aiAnyKey==='function'&&aiAnyKey()){
+for(let i=0;i<todo.length&&my===txRun;i+=10){const part=todo.slice(i,i+10);
+try{const r=aiJson(await aiCall(AIS,'Przetłumacz na polski każde z poniższych zdań po hiszpańsku. Zachowaj kolejność i liczbę zdań. Zwróć JSON {"t":[...]} z tablicą tłumaczeń (tyle elementów, ile zdań), bez komentarzy.\n'+JSON.stringify(part.map(p=>p.x)),true,.1));
+if(!Array.isArray(r.t)||r.t.length!==part.length)throw new Error('BADJSON');
+part.forEach((p,j)=>{const v=String(r.t[j]||'').trim();if(v){TXC[p.x]=v;txPut(p.k,v)}})}catch(e){}}}
+const rest=todo.filter(i=>!TXC[i.x]);let n=0;
+await Promise.all([0,1,2].map(async()=>{while(n<rest.length&&my===txRun){const i=rest[n++];try{const v=await txGtx(i.x);TXC[i.x]=v;txPut(i.k,v)}catch(e){fail++;txPut(i.k,'⚠ brak tłumaczenia (dotknij, by spróbować ponownie)',true)}}}));
+txSave();if(my===txRun&&fail)st.textContent='Część zdań nie została przetłumaczona (brak internetu lub limit). Dotknij zdania z ⚠, żeby spróbować jeszcze raz.'}
+function txRender(tr){const t=$('#txIn').value;try{localStorage.setItem('esTxt3',t)}catch(e){}
+const out=$('#txOut'),st=$('#txSt');txClose();txRun++;
 if(!t.trim()){out.innerHTML='';out.hidden=true;st.textContent='';return}
-out.hidden=false;const map=txMap();let h='',last=0,tot=0,kn=0;const nu=new Set();
-for(const m of t.matchAll(TXRE)){const w=m[0],i=m.index,lw=w.toLowerCase(),k=map.get(lw),s=k===undefined?'n':(SR[k]?'a':'l');tot++;if(s==='n')nu.add(lw);else kn++;
-h+=esc(t.slice(last,i))+'<span class="tw '+s+'" data-s="'+i+'" data-e="'+(i+w.length)+'">'+esc(w)+'</span>';last=i+w.length}
-out.innerHTML=h+esc(t.slice(last));
-st.textContent=tot?'Znasz '+Math.round(kn/tot*100)+'% słów w tym tekście ('+kn+' z '+tot+'). Nowych różnych słów: '+nu.size+'. Zielone: ćwiczone, żółte: na Twojej liście, bez koloru: nowe.':''}
+out.hidden=false;const map=txMap();let h='',tot=0,kn=0;const nu=new Set();
+txSegs(t).forEach((sg,si)=>{const a=sg[0],seg=t.slice(a,sg[1]);let last=0,w2='';
+for(const m of seg.matchAll(TXRE)){const w=m[0],i=a+m.index,lw=w.toLowerCase(),k=map.get(lw),s=k===undefined?'n':(SR[k]?'a':'l');tot++;if(s==='n')nu.add(lw);else kn++;
+w2+=esc(seg.slice(last,m.index))+'<span class="tw '+s+'" data-s="'+i+'" data-e="'+(i+w.length)+'">'+esc(w)+'</span>';last=m.index+w.length}
+const c=TXC[txKey(seg)];
+h+='<div class="txs" data-k="'+si+'"><span class="txe">'+w2+esc(seg.slice(last)).replace(/\s+$/,'')+'</span><div class="txtr" data-k="'+si+'">'+(c?esc(c):'')+'</div></div>'});
+out.innerHTML=h;
+st.textContent=tot?'Znasz '+Math.round(kn/tot*100)+'% słów w tym tekście ('+kn+' z '+tot+'). Nowych różnych słów: '+nu.size+'. Zielone: ćwiczone, żółte: na Twojej liście, bez koloru: nowe.':'';
+if(tr===true)txTranslate()}
 function txHave(){const core=txCore($('#txEs').value),have=core?V.filter(x=>x[0].split(/\s*\/\s*/).some(q=>txCore(q)===core)).slice(0,3):[];$('#txHave').textContent=have.length?'Już na liście: '+have.map(x=>x[0]+' – '+x[1]).join('; '):''}
 function txOpen(es,s,e,foc){const t=$('#txIn').value;es=es.replace(/\s+/g,' ').trim().toLowerCase();if(!es)return;
 let a=s;while(a>0&&!/[.!?\n]/.test(t[a-1]))a--;let b=e;while(b<t.length&&!/[.!?\n]/.test(t[b]))b++;if(b<t.length)b++;
@@ -919,16 +948,44 @@ if(txSent.length>=8&&!(mySn[es]&&mySn[es].e)){mySn[es]={e:txSent,p:txSentPl};try
 bump('uw');saveUW();plStop();fillCats();rebuild();quiz();uwRender();toast('✅ Dodano do fiszek: '+es);
 const sel=getSelection();if(sel)sel.removeAllRanges();txRender()};
 $('#txPl').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('#txAdd').click()}});
-$('#txGo').onclick=txRender;
-$('#txIn').addEventListener('paste',()=>setTimeout(txRender,60));
+$('#txGo').onclick=()=>txRender(true);
+$('#txIn').addEventListener('paste',()=>setTimeout(()=>txRender(),60));
 $('#txIn').addEventListener('input',()=>{try{localStorage.setItem('esTxt3',$('#txIn').value)}catch(e){}});
 $('#txClr').onclick=()=>{if($('#txIn').value&&!confirm('Wyczyścić wklejony tekst?'))return;$('#txIn').value='';txRender()};
+$('#txOut').addEventListener('click',ev=>{const e=ev.target.closest('.txtr.er');if(!e)return;const k=e.dataset.k,x=txKey(e.parentNode.querySelector('.txe').textContent);e.textContent='…';e.classList.remove('er');txGtx(x).then(v=>{TXC[x]=v;txSave();txPut(k,v)}).catch(()=>txPut(k,'⚠ brak tłumaczenia (dotknij, by spróbować ponownie)',true))});
 $('#txSp').onclick=()=>{const ss=window.speechSynthesis,t=$('#txIn').value.trim(),b=$('#txSp');if(!ss||!t)return;if(ss.speaking||ss.pending){ss.cancel();b.textContent='🔊 Czytaj';return}
 if(PL.on)plStop();const vs=ss.getVoices(),v=vs.find(x=>x.lang==='es-ES')||vs.find(x=>x.lang&&x.lang.startsWith('es')),ps=t.match(/[^.!?\n]+[.!?]*/g)||[t];b.textContent='⏹ Stop';
 ps.forEach((p,i)=>{if(!p.trim())return;const u=new SpeechSynthesisUtterance(p.trim());u.lang='es-ES';u.rate=.85;if(v)u.voice=v;if(i===ps.length-1){u.onend=u.onerror=()=>{b.textContent='🔊 Czytaj'}}ss.speak(u)})};
+
+/* ===== Tekst dzienny (wol.jw.org) ===== */
+let TXD=[];
+const TXD_URL='https://wol.jw.org/es/wol/h/r4/lp-s';
+function txdParse(html){const doc=new DOMParser().parseFromString(html,'text/html'),days=[];
+let items=[...doc.querySelectorAll('.todayItem')];
+if(!items.length){items=[...doc.querySelectorAll('h2')].filter(h=>/\d/.test(h.textContent)).map(h=>{const w=doc.createElement('div');w.appendChild(h.cloneNode(true));let n=h.nextElementSibling;while(n&&n.tagName!=='H2'){w.appendChild(n.cloneNode(true));n=n.nextElementSibling}return w})}
+items.forEach(it=>{const h=it.querySelector('h2')||it.querySelector('header');const date=h?h.textContent.replace(/\s+/g,' ').trim():'';
+const th=it.querySelector('.themeScrp'),bd=it.querySelector('.bodyTxt');
+const cl=el=>{if(!el)return '';const c=el.cloneNode(true);c.querySelectorAll('a[href*="/wol/pc/"],a[href*="/wol/d/"],sup,.footnote').forEach(x=>x.remove());const ps=[...c.querySelectorAll('p')].map(p=>p.textContent.replace(/\s+/g,' ').trim()).filter(Boolean);return ps.length?ps.join('\n'):c.textContent.replace(/\s+/g,' ').trim()};
+let a=cl(th),b=cl(bd);
+if(!a&&!b){const ps=[...it.querySelectorAll('p')].map(p=>p.textContent.replace(/\s+/g,' ').trim()).filter(Boolean);a=ps[0]||'';b=ps.slice(1).join('\n')}
+b=b.replace(/\s*[wW]\d{2}\.\d{2}\s.*$/,'').trim();
+if(date&&(a||b))days.push({d:date,t:date+'\n'+a+'\n'+b})});
+return days}
+async function txdFetch(){const urls=[TXD_URL,'https://api.allorigins.win/raw?url='+encodeURIComponent(TXD_URL),'https://corsproxy.io/?url='+encodeURIComponent(TXD_URL)];let last;
+for(const u of urls){try{const r=await fetch(u,{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const days=txdParse(await r.text());if(days.length)return days}catch(e){last=e}}
+throw last||new Error('EMPTY')}
+function txdUse(i){const d=TXD[i];if(!d)return;$('#txIn').value=d.t;try{localStorage.setItem('esTxt3',d.t)}catch(e){}txRender(true)}
+$('#txDay').onclick=async()=>{const b=$('#txDay'),st=$('#txSt');b.disabled=true;st.textContent='Pobieram tekst dzienny…';
+try{TXD=await txdFetch();try{localStorage.setItem('esTxDay1',JSON.stringify({days:TXD}))}catch(e){}}
+catch(e){let c=null;try{c=JSON.parse(localStorage.getItem('esTxDay1')||'null')}catch(x){}
+if(c&&c.days&&c.days.length){TXD=c.days;st.textContent='Brak połączenia ze stroną. Pokazuję ostatnio pobrany tekst.'}
+else{st.textContent='Nie udało się pobrać tekstu dziennego (strona blokuje pobieranie z aplikacji albo brak internetu). Otwórz stronę wol.jw.org, skopiuj tekst i wklej go tutaj.';b.disabled=false;return}}
+b.disabled=false;const sel=$('#txDaySel');sel.innerHTML=TXD.map((d,i)=>'<option value="'+i+'">'+esc(d.d)+'</option>').join('');
+const ti=TXD.length>1?1:0;sel.value=ti;sel.hidden=TXD.length<2;txdUse(ti)};
+$('#txDaySel').onchange=e=>txdUse(+e.target.value);
 try{$('#txIn').value=localStorage.getItem('esTxt3')||''}catch(e){}
 txRender();
-$('nav [data-p="tx"]').addEventListener('click',txRender);
+$('nav [data-p="tx"]').addEventListener('click',()=>txRender());
 
 /* ===== Kopia zapasowa ===== */
 const BK=['esSrs3','esErr3','esGame3','esUser3','esMemo','esSent','esDone3','esEmo3','esTy3','esTxt3','esVb3'],BKP=['esEmo3','esTy3','esTxt3'];
