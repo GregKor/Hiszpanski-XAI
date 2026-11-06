@@ -177,7 +177,7 @@ body.noemo .card .pic{display:none}
 <section id="tx" class="panel">
 <p class="sub" style="margin-bottom:10px">Wklej hiszpański tekst, a potem dotknij słowa (albo zaznacz kilka) i dodaj je do fiszek.</p>
 <textarea id="txIn" rows="6" maxlength="20000" class="sel" style="width:100%" placeholder="Wklej tutaj hiszpański tekst…" aria-label="Tekst po hiszpańsku" lang="es"></textarea>
-<div class="row"><button class="btn" id="txDay">📖 Tekst dzienny</button></div>
+<div class="row"><button class="btn" id="txDay">📖 Tekst dzienny</button><button class="btn" id="txPaste">📋 Wklej ze schowka</button></div>
 <select id="txDaySel" class="sel" aria-label="Dzień" hidden style="width:100%;margin-top:8px"></select>
 <div class="row"><button class="btn" id="txGo">Pokaż tekst</button><button class="btn" id="txSp">🔊 Czytaj</button><button class="btn" id="txClr">Wyczyść</button></div>
 <div id="txSt" style="min-height:1.4em;font-size:.88rem;color:var(--mute);margin:8px 0" aria-live="polite"></div>
@@ -960,28 +960,32 @@ ps.forEach((p,i)=>{if(!p.trim())return;const u=new SpeechSynthesisUtterance(p.tr
 /* ===== Tekst dzienny (wol.jw.org) ===== */
 let TXD=[];
 const TXD_URL='https://wol.jw.org/es/wol/h/r4/lp-s';
+const txdTxt=el=>{if(!el)return '';const c=el.cloneNode(true);c.querySelectorAll('a[href*="/wol/pc/"],a[href*="/wol/d/"],sup,.footnote').forEach(x=>x.remove());const ps=[...c.querySelectorAll('p')].map(p=>p.textContent.replace(/\s+/g,' ').trim()).filter(Boolean);return ps.length?ps.join('\n'):c.textContent.replace(/\s+/g,' ').trim()};
+function txdItem(it,date){let a=txdTxt(it.querySelector('.themeScrp')),b=txdTxt(it.querySelector('.bodyTxt'));
+if(!a&&!b){const ps=[...it.querySelectorAll('p')].map(p=>p.textContent.replace(/\s+/g,' ').trim()).filter(Boolean);a=ps[0]||'';b=ps.slice(1).join('\n')}
+b=b.replace(/\s*[wW]\d{2}\.\d{2}\s.*$/,'').trim();return (date&&(a||b))?{d:date,t:date+'\n'+a+'\n'+b}:null}
 function txdParse(html){const doc=new DOMParser().parseFromString(html,'text/html'),days=[];
 let items=[...doc.querySelectorAll('.todayItem')];
 if(!items.length){items=[...doc.querySelectorAll('h2')].filter(h=>/\d/.test(h.textContent)).map(h=>{const w=doc.createElement('div');w.appendChild(h.cloneNode(true));let n=h.nextElementSibling;while(n&&n.tagName!=='H2'){w.appendChild(n.cloneNode(true));n=n.nextElementSibling}return w})}
-items.forEach(it=>{const h=it.querySelector('h2')||it.querySelector('header');const date=h?h.textContent.replace(/\s+/g,' ').trim():'';
-const th=it.querySelector('.themeScrp'),bd=it.querySelector('.bodyTxt');
-const cl=el=>{if(!el)return '';const c=el.cloneNode(true);c.querySelectorAll('a[href*="/wol/pc/"],a[href*="/wol/d/"],sup,.footnote').forEach(x=>x.remove());const ps=[...c.querySelectorAll('p')].map(p=>p.textContent.replace(/\s+/g,' ').trim()).filter(Boolean);return ps.length?ps.join('\n'):c.textContent.replace(/\s+/g,' ').trim()};
-let a=cl(th),b=cl(bd);
-if(!a&&!b){const ps=[...it.querySelectorAll('p')].map(p=>p.textContent.replace(/\s+/g,' ').trim()).filter(Boolean);a=ps[0]||'';b=ps.slice(1).join('\n')}
-b=b.replace(/\s*[wW]\d{2}\.\d{2}\s.*$/,'').trim();
-if(date&&(a||b))days.push({d:date,t:date+'\n'+a+'\n'+b})});
-return days}
-async function txdFetch(){const urls=[TXD_URL,'https://api.allorigins.win/raw?url='+encodeURIComponent(TXD_URL),'https://corsproxy.io/?url='+encodeURIComponent(TXD_URL)];let last;
-for(const u of urls){try{const r=await fetch(u,{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const days=txdParse(await r.text());if(days.length)return days}catch(e){last=e}}
-throw last||new Error('EMPTY')}
+items.forEach(it=>{const h=it.querySelector('h2')||it.querySelector('header');const x=txdItem(it,h?h.textContent.replace(/\s+/g,' ').trim():'');if(x)days.push(x)});return days}
+const TXD_PX=[u=>u,u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),u=>'https://corsproxy.io/?url='+encodeURIComponent(u),u=>'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u)];
+async function txdGet(u,errs,json){for(const px of TXD_PX){try{const r=await fetch(px(u),{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);return json?await r.json():await r.text()}catch(e){errs.push((e&&e.message)||'błąd')}}throw new Error('ALL')}
+async function txdFetch(errs){const days=[];
+const ds=[-1,0,1].map(o=>{const d=new Date();d.setDate(d.getDate()+o);return d});
+const rs=await Promise.all(ds.map(async d=>{try{const j=await txdGet('https://wol.jw.org/wol/dt/r4/lp-s/'+d.getFullYear()+'/'+(d.getMonth()+1)+'/'+d.getDate(),errs,true);const it=j&&j.items&&j.items[0];if(!it||!it.content)return null;const w=new DOMParser().parseFromString(it.content,'text/html').body;
+const t=(d.toLocaleDateString('es',{weekday:'long',day:'numeric',month:'long'}));return txdItem(w,t.charAt(0).toUpperCase()+t.slice(1))}catch(e){return null}}));
+rs.forEach(x=>{if(x)days.push(x)});if(days.length)return days;
+try{const p=txdParse(await txdGet(TXD_URL,errs,false));if(p.length)return p}catch(e){}
+throw new Error('EMPTY')}
 function txdUse(i){const d=TXD[i];if(!d)return;$('#txIn').value=d.t;try{localStorage.setItem('esTxt3',d.t)}catch(e){}txRender(true)}
 $('#txDay').onclick=async()=>{const b=$('#txDay'),st=$('#txSt');b.disabled=true;st.textContent='Pobieram tekst dzienny…';
-try{TXD=await txdFetch();try{localStorage.setItem('esTxDay1',JSON.stringify({days:TXD}))}catch(e){}}
+const errs=[];try{TXD=await txdFetch(errs);try{localStorage.setItem('esTxDay1',JSON.stringify({days:TXD}))}catch(e){}}
 catch(e){let c=null;try{c=JSON.parse(localStorage.getItem('esTxDay1')||'null')}catch(x){}
 if(c&&c.days&&c.days.length){TXD=c.days;st.textContent='Brak połączenia ze stroną. Pokazuję ostatnio pobrany tekst.'}
-else{st.textContent='Nie udało się pobrać tekstu dziennego (strona blokuje pobieranie z aplikacji albo brak internetu). Otwórz stronę wol.jw.org, skopiuj tekst i wklej go tutaj.';b.disabled=false;return}}
+else{st.textContent='Nie udało się pobrać tekstu dziennego ('+[...new Set(errs)].slice(0,3).join('; ')+'). Skopiuj tekst ze strony wol.jw.org i dotknij „📋 Wklej ze schowka”.';b.disabled=false;return}}
 b.disabled=false;const sel=$('#txDaySel');sel.innerHTML=TXD.map((d,i)=>'<option value="'+i+'">'+esc(d.d)+'</option>').join('');
 const ti=TXD.length>1?1:0;sel.value=ti;sel.hidden=TXD.length<2;txdUse(ti)};
+$('#txPaste').onclick=async()=>{try{const t=await navigator.clipboard.readText();if(!t.trim()){toast('Schowek jest pusty.');return}$('#txIn').value=t.slice(0,20000);$('#txDaySel').hidden=true;txRender(true)}catch(e){$('#txSt').textContent='Nie mam dostępu do schowka. Wklej tekst ręcznie w pole.'}};
 $('#txDaySel').onchange=e=>txdUse(+e.target.value);
 try{$('#txIn').value=localStorage.getItem('esTxt3')||''}catch(e){}
 txRender();
